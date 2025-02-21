@@ -1,0 +1,6 @@
+version = "0.1"
+
+[default]
+stack_name = "todo-list-production"
+capabilities = "CAPABILITY_IAM"
+region = "us-west-2"
