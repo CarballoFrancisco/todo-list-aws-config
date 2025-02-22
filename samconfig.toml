@@ -4,5 +4,5 @@ version = "0.1"
 stack_name = "todo-list-production"
 capabilities = "CAPABILITY_IAM"
 region = "us-west-2"
-table_name = "todos-production"  # Nombre de la tabla para el entorno de producción
+
 
