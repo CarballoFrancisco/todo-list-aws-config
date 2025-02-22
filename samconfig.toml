@@ -3,7 +3,7 @@ version = 0.1
 [default]
 [default.deploy]
 [default.deploy.parameters]
-stack_name = "todo-list-aws"
+stack_name = "todo-list-aws-default"  # Cambio en el nombre del stack para no interferir con producción
 s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-upt09go84tay"
 s3_prefix = "todo-list-aws"
 region = "us-east-1"
@@ -14,7 +14,7 @@ image_repositories = []
 [production]
 [production.deploy]
 [production.deploy.parameters]
-stack_name = "todo-list-aws-production"
+stack_name = "todo-list-aws-production"  # Mantén el nombre de stack original para producción
 s3_bucket = "aws-sam-cli-managed-production-samclisourcebucket-upt09go84tay"
 s3_prefix = "todo-list-aws"
 region = "us-east-1"
