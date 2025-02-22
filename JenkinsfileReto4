@@ -1,0 +1,46 @@
+pipeline {
+    agent any
+    stages {
+        stage('Get Code') {
+            steps {
+                echo 'Clonando el repositorio de código fuente...'
+                git branch: 'develop', url: 'https://github.com/CarballoFrancisco/todo-list-aws-config.git'
+                sh 'whoami'
+                sh 'hostname'
+
+               
+                script {
+                    def configBranch = env.BRANCH_NAME == 'develop' ? 'staging' : 'production'
+                    echo "Descargando el archivo samconfig.toml desde la rama: ${configBranch}"
+                    sh """
+                        if [ -d "config-repo" ]; then
+                            rm -rf config-repo
+                        fi
+                        git clone -b ${configBranch} https://github.com/CarballoFrancisco/todo-list-aws-config.git config-repo
+                        if [ -f config-repo/samconfig.toml ]; then
+                            cp config-repo/samconfig.toml .
+                        else
+                            echo "Error: samconfig.toml no encontrado en la rama ${configBranch}."
+                            error "samconfig.toml no encontrado en la rama ${configBranch}."
+                        fi
+                    """
+                }
+            }
+        }
+
+        stage('Show Config File') {
+            steps {
+                echo 'Mostrando el contenido del archivo samconfig.toml...'
+                sh 'cat samconfig.toml'  // Aquí solo mostramos el archivo ya descargado
+            }
+        }
+
+
+        stage('Finish') {
+            steps {
+                echo '¡Ejecución de la pipeline finalizada!'
+            }
+        }
+    }
+}
+
