@@ -3,7 +3,7 @@ version = 0.1
 [default]
 [default.deploy]
 [default.deploy.parameters]
-stack_name = "todo-list-aws"
+stack_name = "todo-list-aws-default"  # Cambiado para evitar conflicto con otros entornos
 s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-upt09go84tay"
 s3_prefix = "todo-list-aws"
 region = "us-east-1"
@@ -14,7 +14,7 @@ image_repositories = []
 [staging]
 [staging.deploy]
 [staging.deploy.parameters]
-stack_name = "todo-list-aws-staging"
+stack_name = "todo-list-aws-staging"  # Nombre de stack exclusivo para el entorno de staging
 s3_bucket = "aws-sam-cli-managed-staging-samclisourcebucket-upt09go84tay"
 s3_prefix = "todo-list-aws"
 region = "us-east-1"
