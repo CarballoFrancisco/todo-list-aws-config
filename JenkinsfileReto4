@@ -1,14 +1,22 @@
 pipeline {
     agent any
+
+    environment {
+        bucketName = "todo-list-aws-bucket-${UUID.randomUUID().toString()}"
+    }
+
     stages {
         stage('Get Code') {
             steps {
-                echo 'Clonando el repositorio de código fuente...'
-                git branch: 'develop', url: 'https://github.com/CarballoFrancisco/todo-list-aws-config.git'
+                echo 'Clonando el repositorio de código fuente...'
+                git branch: 'develop', url: 'https://github.com/CarballoFrancisco/todo-list-aws.git'
                 sh 'whoami'
                 sh 'hostname'
+            }
+        }
 
-               
+        stage('Get Config') {
+            steps {
                 script {
                     def configBranch = env.BRANCH_NAME == 'develop' ? 'staging' : 'production'
                     echo "Descargando el archivo samconfig.toml desde la rama: ${configBranch}"
@@ -21,26 +29,136 @@ pipeline {
                             cp config-repo/samconfig.toml .
                         else
                             echo "Error: samconfig.toml no encontrado en la rama ${configBranch}."
-                            error "samconfig.toml no encontrado en la rama ${configBranch}."
+                            exit 1
                         fi
                     """
                 }
             }
         }
 
-        stage('Show Config File') {
+        stage('Static Test') {
             steps {
-                echo 'Mostrando el contenido del archivo samconfig.toml...'
-                sh 'cat samconfig.toml'  // Aquí solo mostramos el archivo ya descargado
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    script {
+                        echo 'Ejecutando análisis estático con Flake8 y Bandit...'
+                        sh 'flake8 --exit-zero --format=pylint src >flake8.out'
+                        sh 'cat flake8.out'
+                        recordIssues tools: [flake8(name: 'Flake8', pattern: 'flake8.out')]
+
+                        sh 'python3 -m venv venv'
+                        sh './venv/bin/bandit --exit-zero -r src -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}]: {msg}"'
+                        sh 'cat bandit.out'
+                        recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')]
+                    }
+                }
             }
         }
 
+        stage('SAM') {
+            steps {
+                echo 'Construyendo, validando y desplegando la aplicación SAM...'
+                // Usamos el archivo samconfig.toml descargado
+                sh 'sam build --config-file samconfig.toml'
+                sh 'sam validate --config-file samconfig.toml'
+
+                // Eliminar el stack si existe
+                sh 'aws cloudformation delete-stack --stack-name todo-list-stack --region us-east-1'
+                sh 'aws cloudformation wait stack-delete-complete --stack-name todo-list-stack --region us-east-1'
+
+                // Crear el bucket S3
+                sh "aws s3api create-bucket --bucket ${bucketName} --region us-east-1"
+
+                // Desplegar la aplicación usando SAM y el archivo de configuración
+                sh """
+                    sam deploy --no-confirm-changeset \
+                    --stack-name todo-list-stack \
+                    --capabilities CAPABILITY_IAM \
+                    --region us-east-1 \
+                    --s3-bucket ${bucketName} \
+                    --no-fail-on-empty-changeset \
+                    --parameter-overrides Stage=staging \
+                    --config-file samconfig.toml
+                """
+            }
+        }
+
+        stage('REST API Integration Tests') {
+            steps {
+                script {
+                    echo 'Running REST API integration tests using curl...'
+
+                    def baseUrl = sh(script: 'aws cloudformation describe-stacks --stack-name todo-list-stack --region us-east-1 --query "Stacks[0].Outputs[?OutputKey==\'BaseUrlApi\'].OutputValue" --output text', returnStdout: true).trim()
+                    def apiUrl = "${baseUrl}/todos"
+
+                    // GET todos
+                    def responseCode = sh(script: "curl -s -o /dev/null -w '%{http_code}' -X GET ${apiUrl}", returnStdout: true).trim()
+                    if (responseCode == '200') {
+                        echo "La API responde correctamente."
+                    } else {
+                        error "Error al acceder a la API. Código de estado: ${responseCode}"
+                    }
+
+                    // POST todos
+                    def postData = '{"text": "Test task", "userId": "12345"}'
+                    def postResponse = sh(script: """
+                        curl -s -X POST ${apiUrl} \
+                        -H "Content-Type: application/json" \
+                        -d '${postData}' \
+                        -w "%{http_code}" -o post_response.json
+                    """, returnStdout: true).trim()
+
+                    echo "POST Response Code: ${postResponse}"
+                    def postResponseBody = readFile('post_response.json')
+                    echo "POST Response Body: ${postResponseBody}"
+
+                    if (postResponse != '200') {
+                        error "POST request failed! Expected 200, got ${postResponse}"
+                    }
+
+                    // Extraer el ID del TODO creado
+                    def todoId = sh(script: "jq -r '.body | fromjson | .id' post_response.json", returnStdout: true).trim()
+                    echo "Nuevo TODO creado con ID: ${todoId}"
+
+                    // GET todos/{id}
+                    def getTodoResponse = sh(script: "curl -s -o /dev/null -w '%{http_code}' -X GET ${apiUrl}/${todoId}", returnStdout: true).trim()
+                    if (getTodoResponse == '200') {
+                        echo "GET TODO con ID ${todoId} fue exitoso."
+                    } else {
+                        error "Error al obtener el TODO con ID ${todoId}. Código de estado: ${getTodoResponse}"
+                    }
+
+                    // PUT todos/{id} (actualizar antes de eliminar)
+                    def putData = '{"text": "Updated task", "userId": "12345", "checked": true}'
+                    def putResponse = sh(script: """
+                        curl -s -X PUT ${apiUrl}/${todoId} \
+                        -H "Content-Type: application/json" \
+                        -d '${putData}' \
+                        -w "%{http_code}" -o put_response.json
+                    """, returnStdout: true).trim()
+
+                    echo "PUT Response Code: ${putResponse}"
+                    if (putResponse != '200') {
+                        error "PUT request failed! Expected 200, got ${putResponse}"
+                    }
+
+                    // DELETE todos/{id}
+                    def deleteResponseCode = sh(script: "curl -s -o /dev/null -w '%{http_code}' -X DELETE ${apiUrl}/${todoId}", returnStdout: true).trim()
+                    
+                    if (deleteResponseCode == '200') {
+                        echo "El TODO con ID ${todoId} fue eliminado correctamente."
+                    } else {
+                        error "Error al eliminar el TODO. Código de estado: ${deleteResponseCode}"
+                    }
+                }
+            }
+        }
 
         stage('Finish') {
             steps {
-                echo '¡Ejecución de la pipeline finalizada!'
+                echo '¡Ejecución de la pipeline finalizada!'
             }
         }
     }
 }
+
 
