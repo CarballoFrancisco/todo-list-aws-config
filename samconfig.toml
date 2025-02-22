@@ -1,4 +1,5 @@
-version = 0.1
+version = "0.1"
+
 [default]
 [default.deploy]
 [default.deploy.parameters]
@@ -30,4 +31,4 @@ s3_prefix = "todo-list-aws"
 region = "us-east-1"
 capabilities = "CAPABILITY_IAM"
 parameter_overrides = "Stage=\"production\""
-image
+image_repositories = []
